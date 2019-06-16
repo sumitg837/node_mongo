@@ -1,0 +1,10 @@
+<div id="ses_msg">
+       <% if ( sessionFlash && sessionFlash.message) { %>
+        
+            <div class="alert alert-<%= sessionFlash.type %>">
+                <strong>FLASH!</strong> <%= sessionFlash.message %>
+            </div>
+        
+        <% } %>
+    </div>
+Error 404!

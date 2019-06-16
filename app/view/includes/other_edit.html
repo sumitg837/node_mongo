@@ -1,0 +1,1399 @@
+//dashboard controller
+const mongoose      = require('mongoose');
+const path        = require('path');
+const async       = require('async');
+const multer      = require('multer');
+const formidable    = require('formidable');
+const fs        = require('fs');
+
+const storage = multer.diskStorage({
+  destination: function(req, file, callback){
+    callback(null, './assets/uploads');
+  }, 
+  filename : function(req, file, callback){
+    let t_string = Date.now().toString();
+    callback(null, file.fieldname + '-' +t_string+ path.extname(file.originalname));
+  }
+});
+
+//DB Models
+let Driver        = require('../../app/models').driver;
+let Advertisement     = require('../../app/models').advertisement;
+let Ad_assign       = require('../../app/models').ad_assign;
+let Track_email     = require('../../app/models').track_email;
+let Track_engaging_ad   = require('../../app/models').track_engaging_ad;
+let Contact       = require('../../app/models').contact;
+let Imei        = require('../../app/models').imei;
+let Play_ad       = require('../../app/models').play_ad;
+
+//validate incoming request
+let validateRequest = (req, res, next) => {
+  if(!req.session.user){
+    res.redirect('/');
+    return ;
+  }
+};
+//check if object is empty
+var isEmpty = function(obj) {
+  for (var key in obj)
+    if(obj.hasOwnProperty(key))
+      return false;
+  return true;
+};
+//validate incoming objectId
+var validateObjectId = function(objectId){
+  if(!mongoose.Types.ObjectId.isValid(objectId))
+    return false;
+  return true;
+};
+//count-ad
+var count_ad = function(id){
+      Ad_assign.count({driver_id: id}, (err, count)=>{
+        if(err) throw err;
+        return count;
+      });
+  
+};
+//dashboard
+exports.index = (req, res, next) => {
+    try{
+    validateRequest(req, res);
+    let session = req.session;
+
+    async.series({
+      drivers: (callback) => {
+        Driver.find({}, (err, drivers) => {
+          callback(err, drivers);
+        });
+      },
+      advertisements: (callback) => {
+        Advertisement.find({}, (err, advertisements) => {
+          callback(err, advertisements);
+        });
+      },
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      },
+      subscribers: (callback) =>{
+        Track_email.find({}, (err, subscriber)=>{
+          callback(err, subscriber);
+        });
+      },
+      engageds: (callback) =>{
+        Track_engaging_ad.find({}, (err, count)=>{
+          callback(err, count);
+        });
+      }
+    }, (err, results) => {
+      //console.log(results.contacts);
+      res.render('dashboard',
+      { 
+        advertisements: results.advertisements,
+        drivers: results.drivers,
+        contacts: results.contacts,
+        subscribers: results.subscribers,
+        engageds: results.engageds,
+        session : req.session
+      });
+      res.end();
+      return ;
+    });
+
+  }catch(error){
+    // console.log('Error::')
+    throw error;
+  }
+};
+
+
+
+//advertisement
+exports.advertisement = (req, res, next) => {
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    async.series({
+      advertisements: (callback) => {
+        Advertisement.find({}, (err, advertisements) => {
+          callback(err, advertisements);
+        });
+      },
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      }
+    }, (err, results) => {
+      //console.log(results);
+      res.render('advertisement', 
+        {
+          advertisements: results.advertisements,
+          contacts: results.contacts,
+          session: req.session
+        });
+      res.end();
+      return ;
+    });
+  }catch(error){
+    throw error;
+  }
+};
+
+//add Advertisement
+exports.addAdvertisement = (req, res, next) => {
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let upload = multer({storage: storage}).single('file');
+    upload(req, res, function(err){
+      if(err){
+        res.end(`errro. ${err}`);
+        return ;
+      }
+      let name = req.body.name;
+      let type = req.body.type;
+      if(type != (req.file.mimetype).substring(0,5) && type != 'subscription'){
+        req.session.sessionFlash = {
+                    type: 'danger',
+                    message: 'File uploaded is not of advertisement type!.'
+                };
+                res.redirect('/advertisement');
+                res.end();
+                return ;
+      }
+      let duration = req.body.duration;
+      if(req.file && name && duration){
+        //console.log(req.file.filename);
+        let link = req.file.filename;
+        let create = Date.now();
+        let size = parseInt(parseInt(req.file.size)/(1024*1024));
+        //type = (req.file.mimetype).substring(0,5);
+        if(size < 26){
+          Advertisement.findOne({name: name}, (err, result) =>{
+          //console.log(result);
+          if(result){
+            fs.stat('./assets/uploads/'+link, function (err, stats) {
+               //onsole.log(stats);//here we got all information of file in stats variable
+
+               if (err) {
+                   return console.error(err);
+               }
+
+               fs.unlink('./assets/uploads/'+link,function(err){
+                    if(err) return console.log(err);
+                   // console.log('file deleted successfully');
+               });  
+            });
+            req.session.sessionFlash = {
+                          type: 'danger',
+                          message: 'This Advertisement name is Already Added!.Use Unique Advertisement Name!.'
+                      };
+                      res.redirect('/advertisement');
+                      res.end();
+                      return ;
+          }else{
+              Advertisement.create({
+                name : name,
+                type : type,
+                duration : duration,
+                link : link,
+                create : create,
+                modify : create
+              }, (err, result)=>{
+                if (result) {
+                            req.session.sessionFlash = {
+                                type: 'success',
+                                message: 'Advertisement Created successfully!.'
+                            };
+                        }
+                        res.redirect('/advertisement');
+                        res.end();
+                        return ;
+              });
+            
+          }
+        });
+        }else{
+          fs.stat('./assets/uploads/'+link, function (err, stats) {
+               //onsole.log(stats);//here we got all information of file in stats variable
+
+               if (err) {
+                   return console.error(err);
+               }
+
+               fs.unlink('./assets/uploads/'+link,function(err){
+                    if(err) return console.log(err);
+                   // console.log('file deleted successfully');
+               });  
+            });
+           req.session.sessionFlash = {
+                      type: 'danger',
+                      message: 'File size must be less than 25MB!.'
+                  };
+                  res.redirect('/advertisement');
+                  res.end();
+                  return ;
+        }
+      }else{
+        req.session.sessionFlash = {
+                    type: 'danger',
+                    message: 'please select a File!.'
+                };
+                res.redirect('/advertisement');
+                res.end();
+                return ;
+      }
+
+    });
+
+    
+
+  }catch(error){
+    throw error;
+  }
+};
+//edit advertisement
+exports.editAdvertisement = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id = req.body.id;
+    if(validateObjectId(id)){
+      async.series({
+        advertisement: (callback) =>{
+          Advertisement.findOne({_id: id}, (err, result) =>{
+            callback(err, result);
+          });
+        }
+      }, (err, result) =>{
+          if(err) throw err;
+          if(result){
+            res.send(JSON.stringify({result: result.advertisement}));
+            return ;
+          }
+      });
+    }else{
+      res.send(JSON.stringify({result:'Not Valid Information!'}));
+      return ;
+    }
+  }catch(err){
+    throw err;
+  }
+}
+//update Advertisement
+exports.updateAdvertisement = (req, res, next) => {
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let upload = multer({storage: storage}).single('file');
+    upload(req, res, function(err){
+      if(err){
+        return res.end(`errro. ${err}`)
+      }
+      let _id = req.body.ad_id;
+      let prv_pic = req.body.prv_pic;
+      let name = req.body.name;
+      let type = req.body.type;
+      if(type != (req.file.mimetype).substring(0,5) && type != 'subscription'){
+        req.session.sessionFlash = {
+                    type: 'danger',
+                    message: 'File uploaded is not of advertisement type!.'
+                };
+                res.redirect('/advertisement');
+                res.end();
+                return ;    
+      }
+      let duration = req.body.duration;
+      let link = req.file.filename;
+      let modify = Date.now();
+      let size = parseInt(parseInt(req.file.size)/(1024*1024));
+      // type = (req.file.mimetype).substring(0,5);
+      if(validateObjectId(_id)){
+
+        if(size < 26){
+          Advertisement.findOne({name: name}, (err, result) =>{
+            if(err) throw err;
+          if(_id != result._id){
+                            fs.stat('./assets/uploads/'+link, function (err, stats) {
+                               //onsole.log(stats);//here we got all information of file in stats variable
+
+                               if (err) {
+                                   return console.error(err);
+                               }
+
+                               fs.unlink('./assets/uploads/'+link,function(err){
+                                    if(err) return console.log(err);
+                                   // console.log('file deleted successfully');
+                               });  
+                            });
+                            req.session.sessionFlash = {
+                                type: 'danger',
+                                message: 'This Advertisement name is Already Added!.Use Unique Advertisement Name!.'
+                            };
+                            res.redirect('/advertisement');
+                            res.end();
+                            return ;
+                        }else{
+                                Advertisement.update({_id: _id},
+                                { $set: {
+                                    name : name,
+                                    type : type,
+                                    duration : duration,
+                                    link : link,
+                                    modify: Date.now()
+                                    }
+                                }, (err, result)=>{
+                                    if (result) {
+                                        fs.stat('./assets/uploads/'+prv_pic, function (err, stats) {
+                                           //onsole.log(stats);//here we got all information of file in stats variable
+
+                                           if (err) {
+                                               return console.error(err);
+                                           }
+
+                                           fs.unlink('./assets/uploads/'+prv_pic,function(err){
+                                                if(err) return console.log(err);
+                                               // console.log('file deleted successfully');
+                                           });  
+                                        });
+                                        req.session.sessionFlash = {
+                                            type: 'success',
+                                            message: 'Advertisement updated successfully!.'
+                                        };
+                                        res.redirect('/advertisement');
+                                        res.end();
+                                        return ;
+                                    }
+                                });
+                            
+                        }
+            // return res.redirect('/advertisement');
+       //             res.end();
+          });
+        }else{
+          fs.stat('./assets/uploads/'+link, function (err, stats) {
+               //onsole.log(stats);//here we got all information of file in stats variable
+
+               if (err) {
+                   return console.error(err);
+               }
+
+               fs.unlink('./assets/uploads/'+link,function(err){
+                    if(err) return console.log(err);
+                   // console.log('file deleted successfully');
+               });  
+            });
+           req.session.sessionFlash = {
+                      type: 'danger',
+                      message: 'File size must be less than 25MB!.'
+                  };
+                  res.redirect('/advertisement');
+                  res.end();
+                  return ;
+        }
+
+
+      }else{
+        res.render('error');
+        res.end();
+        return ;
+        //return res.send(JSON.stringify({result:'Not Valid Information!'}));
+        
+      }
+      
+      
+
+    });
+
+    
+
+  }catch(error){
+    throw error;
+  }
+};
+//remove advertisement
+exports.removeAd =(req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id = req.params.id;
+    if(validateObjectId(id)){
+      async.series({
+        Ad_assign: (callback) =>{
+          Ad_assign.find({advertisement_id: id}, (err, result2) =>{
+            if(!isEmpty(result2)){
+              Ad_assign.deleteMany({advertisement_id: id}, (err, results) =>{
+                 callback(err, results);    
+              });
+            }else{
+              callback(err, result2);
+            }
+            
+          });
+        },
+        Track_email: (callback) =>{
+          Track_email.deleteMany({advertisement_id: id}, (err, result) =>{
+             callback(err, result);
+          });
+        },
+        Track_engaging_ad: (callback) =>{
+          Track_engaging_ad.deleteMany({advertisement_id: id}, (err, result) =>{
+              callback(err, result);
+          });
+        },
+        Advertisement: (callback) =>{
+          Advertisement.findOne({_id : id}, (err, result3) =>{
+            if(!isEmpty(result3)){
+              Advertisement.remove({_id : id}, (err, result1) =>{
+                return;
+              });
+            }
+             callback(err,  result3); 
+          }); 
+        }
+      }, (err, result) =>{
+        if(err) throw err;
+        if(result){
+          req.session.sessionFlash = {
+                      type: 'success',
+                      message: 'Advertisement Removed!.'
+                  };
+                  res.redirect('/advertisement');
+                  return ;
+            }
+            
+    });
+    }else{
+      res.redirect('/error');
+      return ;
+    }
+    
+    
+  }catch(err){
+    throw err;
+  }
+};
+
+//drivers
+exports.drivers = (req, res, next) => {
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+
+    async.parallel({
+      ad_assigns: (callback) => {
+        Ad_assign.find({})
+        .populate({
+          path: 'driver_id',
+          model: 'Driver',
+        }).populate({
+          path: 'advertisement_id',
+          model: 'Advertisement',
+        }).exec(function(err, ad_assigns){
+          
+          callback(err, ad_assigns);
+        });
+      },
+      advertisements: (callback) => {
+        Advertisement.find({}, (err, advertisements) => {
+          callback(err, advertisements);
+        });
+      },
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      },
+      imeis: (callback) =>{
+        Imei.find({config: 0 }, (err, imei)=>{
+          callback(err, imei);
+        });
+      }
+    }, (err, results) => {
+      //console.log(results.ad_assigns);
+      var driverId = '';
+      var ad_assign_id = '';
+      var name = '';
+      var driver_id = '';
+      var status = '';
+      var ad = 0;
+      var tablets = 0;
+      var ad_assigns_array = [];
+      var sts = true;
+      results.ad_assigns.forEach((ad_assigns)=>{
+        
+        if(driver_id != ad_assigns.driver_id.driver_id ){
+          driverId = ad_assigns.driver_id._id;
+          ad_assign_id = ad_assigns._id; 
+          name = ad_assigns.driver_id.name;
+          driver_id = ad_assigns.driver_id.driver_id;
+          status = ad_assigns.driver_id.status;
+          tablets = ad_assigns.driver_id.tablet1_udid != 0 ? tablets+1 : tablets;
+          tablets = ad_assigns.driver_id.tablet2_udid != 0 ? tablets+1 : tablets;
+          ad = ad
+          ad_assigns_array.push({
+            ad_assign_id : ad_assign_id,
+            driverId : driverId,
+            name: name,
+            driver_id: driver_id,
+            status: status,
+            tablets: tablets,
+            ad: ad
+          });
+          _id = '';
+          name = '';
+          //driver_id = '';
+          status = '';
+          ad = 0;
+          tablets = 0;
+        }else{
+          ad+1;
+        }
+        
+      });
+      //console.log(ad_assigns_array);
+      res.render('users', {ad_assigns: ad_assigns_array, advertisements: results.advertisements, contacts: results.contacts, imeis:results.imeis, session: req.session});
+      return ;
+    });
+  }catch(error){
+    throw error;
+  }
+};
+
+//check tablet
+exports.checkTablet = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+  let tablet = req.body.tablet;
+  let message = '';
+  let id = req.body.id;
+  // if(validateObjectId(id)){
+    async.series({
+      find: (callback)=>{
+        Driver.findOne({tablet1_udid: tablet}, (err, result) =>{
+        if(isEmpty(result)){
+          Driver.findOne({tablet2_udid: tablet}, (err, result1) =>{
+            if(isEmpty(result1)){
+              message = "empty";
+              callback(err, 'empty');
+              
+            }else{
+              callback(err, 'not');
+              // message = 'not';
+              // res.send(JSON.stringify({message:message}));
+              // return ;
+            }
+          });
+        }else{
+          return callback(err, 'not');
+          // message = 'not';
+          // res.send(JSON.stringify({message:message}));
+          // return ;
+        }
+        //sts1 = isEmpty(result) ? true : false;
+      });
+      }
+    },(err, result) =>{
+      if(err) throw err;
+      return res.send(JSON.stringify({message: result.find}));
+      
+    });
+      
+  // }else{
+  //  return res.send(JSON.stringify({message:'Invalid Information!'}));
+  //  next();
+  // }
+  
+  
+}catch(err){
+  throw err;
+}
+  
+};
+
+//add Driver
+exports.addDriver = (req, res, next) => {
+  try{
+    validateRequest(req, res);
+    let driver_name = req.body.driver_name;
+    let driver_id = req.body.driver_id;
+    let email = req.body.email;
+    let status = req.body.status;
+    let tablet1 = req.body.tablet1;
+    let tablet2 = req.body.tablet2;
+    let field = req.body['field[]'];
+    let fields =[];
+    let message = null;
+
+    Driver.findOne({driver_id: driver_id}, (err, result1) =>{
+      if(err) throw err;
+      if(isEmpty(result1)){
+        if(tablet1 != tablet2 && driver_name !='' && driver_id !='' && email !=''){
+          Driver.create({
+            name: driver_name,
+            driver_id: driver_id,
+            email: email,
+            status: status,
+            tablet1_udid:tablet1,
+            tablet2_udid:tablet2,
+            creates:Date.now(),
+            modify:Date.now()
+          }, (err, result2) => {
+            if(err) throw err;
+            if(result2){
+              async.series({
+                ad_assigns: (callback)=>{
+                  if(typeof(field) != 'string'){
+                    for(let i =0; i < field.length; i++){
+                      fields.push({
+                        driver_id: result2._id,
+                        advertisement_id: field[i],
+                        assign_time: Date.now(),
+                        deassign_time: Date.parse("1/1/1970 12:00:00 AM")
+                      });
+                    }
+                  }else{
+                    fields.push({
+                        driver_id: result2._id,
+                        advertisement_id: field,
+                        assign_time: Date.now(),
+                        deassign_time: Date.parse("1/1/1970 12:00:00 AM")
+                      });
+                  }
+                  Ad_assign.insertMany(fields, (err, results) =>{
+                    callback(err, results);
+                  });
+                  
+                },
+                imei: (callback)=>{
+                  if(tablet1){
+                    Imei.update({imei: tablet1}, {$set: {config : 1}},
+                      (err, result)=>{
+                        //callback(err, result);
+                        return;
+                      });
+                  }if(tablet2){
+                    Imei.update({imei: tablet2}, {$set: {config : 1}},
+                      (err, result)=>{
+                        //callback(err, result);
+                        return;
+                      });
+                  }
+                  callback(null, 'NO Error');
+                }
+                
+              }, (err, result)=>{
+                if(err) throw err;
+                if(result){
+                  res.send(JSON.stringify({message:'Driver Added!.'}));
+                  return ;
+                }
+              });
+            }
+          });
+        }else{
+          res.send(JSON.stringify({message:'Enter Valid Informations!'}));
+          return ;
+        }
+        
+      }else{
+        res.send(JSON.stringify({message:'This Driver ID Already exists! Use Other Id.'}));
+        return ;
+      }
+      
+    });
+  }catch(error){
+    throw error;
+  }
+};
+
+//edit driver
+exports.editDriver = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id = req.body.id;
+    if(validateObjectId(id)){
+      async.series({
+        find: (callback) =>{
+          Driver.findOne({ _id: id }, (err, results) => {
+            callback(err, results);
+          });
+        }
+      }, (err, result)=>{
+        if(err) throw err;
+        if(result){
+          res.send(JSON.stringify({result: result.find }));
+          return ;
+        }
+        
+      });
+    }else{
+      res.send(JSON.stringify({result: 'Error!'}));
+      return ;
+    }
+  }catch(error){
+    throw error;
+  }
+};
+
+//update driver
+exports.updateDriver = (req,res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let _id = req.body._id;
+    let driver_name = req.body.driver_name;
+    let driver_id = req.body.driver_id;
+    let email = req.body.email;
+    let status = req.body.status;
+    let tablet1_udid = req.body.tablet1;
+    let tablet2_udid = req.body.tablet2;
+    let field = req.body['field[]'];
+    let fields =[];
+    let message = null;
+    //console.log(req.body);
+    if(validateObjectId(_id)){
+      if(tablet1_udid != tablet2_udid && driver_name !='' && driver_id !='' && email !=''){
+        async.series({
+          imei: (callback)=>{
+            if(tablet1_udid){
+              Driver.findOne({ _id: _id }, (err, result) =>{
+                if(result.tablet1_udid != tablet1_udid){
+                  Imei.update({imei: result.tablet1_udid},
+                    {$set: {config: 0 }},
+                    (err, result1)=>{
+                      Imei.update({imei: tablet1_udid}, {$set: {config : 1}},
+                      (err, result)=>{
+                        return;
+                      });
+                    });
+                }else{
+                  Imei.update({imei: tablet1_udid}, {$set: {config : 1}},
+                    (err, result)=>{
+                      return;
+                    });
+                }
+              });
+              
+            }if(tablet2_udid){
+              Driver.findOne({ _id: _id }, (err, result) =>{
+                if(result.tablet2_udid != tablet2_udid){
+                  Imei.update({imei: result.tablet2_udid},
+                    {$set: {config: 0 }},
+                    (err, result1)=>{
+                      Imei.update({imei: tablet2_udid}, {$set: {config : 1}},
+                      (err, result)=>{
+                        return;
+                      });
+                    });
+                }else{
+                  Imei.update({imei: tablet2_udid}, {$set: {config : 1}},
+                    (err, result)=>{
+                      return;
+                    });
+                }
+              });
+            }
+            callback(null, 'NO Error');
+          },
+          FindDriver: (callback) =>{
+            Driver.find({_id: _id}, (err, result) =>{
+              if(!isEmpty(result)){
+                Driver.update({_id: _id},
+                { $set: {
+                  name :driver_name,
+                  email: email,
+                  status: status,
+                  tablet1_udid: tablet1_udid,
+                  tablet2_udid: tablet2_udid,
+                  modify: Date.now()
+                  }
+                }, (err, result1) =>{
+                  callback(err, result1);
+                });
+              }else{
+                callback('Not Valid Information', null);
+              }
+            });
+          },
+          UpdateAssign: (callback) =>{
+            Ad_assign.deleteMany({driver_id : _id}, (err, result) =>{
+              if(result){
+                  if(typeof(field) != 'string'){
+                    for(let i =0; i < field.length; i++){
+                      fields.push({
+                        driver_id: _id,
+                        advertisement_id: field[i],
+                        assign_time: Date.now(),
+                        deassign_time: Date.parse("1/1/1970 12:00:00 AM")
+                      });
+                    }
+                  }else{
+                    fields.push({
+                        driver_id: _id,
+                        advertisement_id: field,
+                        assign_time: Date.now(),
+                        deassign_time: Date.parse("1/1/1970 12:00:00 AM")
+                      });
+                  }
+                  Ad_assign.insertMany(fields, (err, results) =>{
+                    return ;   
+                  });
+              }
+              return callback(err, result);
+            });
+          }
+        }, (err, result) =>{
+          if(err)
+            throw err;
+          if(result){
+            res.send(JSON.stringify({message: 'Driver Details Updated!.'}));
+            return ;
+          }
+        });
+      }else{
+        message ='Enter Valid Informations!';
+        res.send(JSON.stringify({message: message}));
+        return ;
+      }
+    }else{
+      res.redirect('/error');
+      return ;
+    }
+    
+  }catch(error){
+    throw error;
+  }
+};
+
+//remove driver
+exports.removeDriver =(req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id = req.params.id;
+    if(validateObjectId(id)){
+      async.series({
+        Ad_assign: (callback) =>{
+          Ad_assign.deleteMany({driver_id: id}, (err, results) =>{
+            callback(err, results);
+          });
+        },
+        Track_email: (callback) =>{
+          Track_email.deleteMany({driver_id: id}, (err, result1) =>{
+            callback(err, result1);
+          });
+        },
+        Track_engaging_ad: (callback) =>{
+          Track_engaging_ad.deleteMany({driver_id: id}, (err, result2) =>{
+            callback(err, result2);
+          });
+        },
+        Imei: (callback) =>{
+          Driver.findOne({_id : id}, (err, result3)=>{
+            if(result3.tablet1_udid != 0){
+              Imei.update({imei : result3.tablet1_udid},
+                {$set: {config: 0}}, (err, result4)=>{
+                  return;
+                });
+            }if(result3.tablet2_udid != 0){
+              Imei.update({imei : result3.tablet2_udid},
+                {$set: {config: 0}}, (err, result4)=>{
+                  return;
+                });
+            }
+            callback(err, 'remove');
+          });
+          
+        },
+        Driver: (callback) =>{
+          Driver.remove({_id : id}, (err, result1) =>{
+            callback(err,  result1);
+          });
+        }
+      }, (err, result) =>{
+        if(err) throw err;
+        if(result){
+
+          req.session.sessionFlash = {
+                      type: 'success',
+                      message: 'Driver Removed!.'
+                  };
+                res.redirect('/drivers');
+                return ;
+            }
+      });
+    }else{
+      res.redirect('/error');
+      return ;
+    }
+  }catch(err){
+    throw err;
+  }
+};
+
+//contact query
+exports.contact =(req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    async.parallel({
+      contact: (callback)=>{
+        Contact.find({}, (err, result) =>{
+          callback(err, result);
+        }).sort({_id : -1});
+      },
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      },
+    },(err, result) => {
+      if(err) throw err;
+      res.render('contact', {contacts : result.contacts,contact : result.contact, session: req.session });
+      return ;
+    }); 
+  }catch(error){
+    throw error;
+  }
+};
+//view notification
+exports.viewNotification = (req, res, next) =>{
+  try{
+    let id = req.params.id;
+    if(validateObjectId(id)){
+      async.series({
+        status: (callback) =>{
+          Contact.update({_id : id}, {$set:{read: 'read'}}, (err, result)=>{
+            callback(err, result);
+          })
+        },
+        contact: (callback) =>{
+          Contact.findOne({_id : id}, (err, contact)=>{
+            callback(err, contact);
+          });
+        },
+        contacts: (callback)=>{
+          Contact.find({read: 'unread'}, (err, result) =>{
+            callback(err, result);
+          }).sort({_id : -1});
+        }
+      }, (err, result) =>{
+        if(err) throw err;
+        // console.log(result.contact);
+        res.render('view_notification', { contact: result.contact, contacts : result.contacts, session: req.session });
+        return ;
+      });
+    }else{
+      res.redirect('/error');
+      return ;
+    }
+  }catch(err){
+    throw err;
+  }
+};
+//remove contact query
+exports.removeContact = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id = req.params.id;
+    if(validateObjectId(id)){
+      async.parallel({
+        contact: (callback) =>{
+          Contact.remove({_id : id}, (err, result1) =>{
+            callback(err,  result1);
+          });
+        }
+      }, (err, result) =>{
+        if(err) throw err;
+        if(result){
+          req.session.sessionFlash = {
+                      type: 'success',
+                      message: 'Contact Removed!.'
+                  };
+                res.redirect('/contact');
+                return ;
+            }
+      });
+    }else{
+      res.redirect('/error');
+      return ;
+    }
+  }catch(err){
+    throw err;
+  }
+};
+//subscribers
+exports.subscriber = (req, res, next) => {
+    try{
+    validateRequest(req, res);
+    let session = req.session;
+
+    async.parallel({
+      drivers: (callback) => {
+        Driver.find({}, (err, drivers) => {
+          callback(err, drivers);
+        });
+      },
+      advertisements: (callback) => {
+        Advertisement.find({}, (err, advertisements) => {
+          callback(err, advertisements);
+        });
+      },
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      },
+      subscribers: (callback) =>{
+        Track_email.find({}, (err, subscriber)=>{
+          callback(err, subscriber);
+        });
+      },
+      ad_subscribers: (callback) =>{
+        Track_email.find({})
+        .populate({
+          path: 'driver_id',
+          model: 'Driver',
+        }).populate({
+          path: 'advertisement_id',
+          model: 'Advertisement',
+        }).exec(function(err, ad_assigns){
+          callback(err, ad_assigns);
+        });
+      }
+    }, (err, results) => {
+      //console.log(results.Ad_subscribers);
+      res.render('subscriber',
+      { 
+        advertisements: results.advertisements,
+        drivers: results.drivers,
+        contacts: results.contacts,
+        subscribers: results.subscribers,
+        ad_subscribers: results.ad_subscribers,
+        session : req.session
+      });
+      return ;      
+    });
+
+  }catch(error){
+    console.log('Error::')
+    throw error;
+  }
+};
+//ad-count
+exports.adCount = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    let id  = req.body.id;
+    //console.log(id);
+    if(validateObjectId(id)){
+      Ad_assign.count({driver_id: id}, (err, count)=>{
+        res.send(JSON.stringify({count: count}));
+        return ;
+      });
+    }else{
+      res.send(JSON.stringify({error: 'not valid id'}));
+      return ;
+    }
+  }catch(err){
+    throw err;
+  }
+};
+//adEngage
+exports.adEngage = (req, res, next) =>{
+  try{
+    validateRequest(req, res);
+    let session = req.session;
+    async.parallel({
+      contacts: (callback) => {
+        Contact.find({read: 'unread'}, (err, contact) => {
+          callback(err, contact);
+        }).sort({ _id : -1 });
+      },
+      adengages: (callback) =>{
+        Track_engaging_ad.find({})
+        .populate({
+          path: 'advertisement_id',
+          model: 'Advertisement',
+        }).exec((err, result)=>{
+          callback(err, result);
+        });
+      }
+    }, (err, results) => {
+      // console.log(results.adengages);
+      res.render('adengage', { adengages: results.adengages, contacts: results.contacts, session: req.session});
+      return ;  
+    });
+    
+  }catch(err){
+    throw err;
+  }
+}
+<!--
+ #
+ #End
+ #
+ -->
+
+<!--<nav class="navbar navbar-default navbar-fixed-top">
+            <div class="container">
+                <div class="navbar-header">
+
+                    <!-- Collapsed Hamburger -->
+                    <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".sidebar-collapse">
+                        <span class="sr-only">Toggle Navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+
+                    <!-- Branding Image -->
+                    <a class="navbar-brand" href="/">
+                        AD_APP
+                    </a>
+                </div>
+
+                <div class="collapse navbar-collapse" id="app-navbar-collapse">
+                    <!-- Left Side Of Navbar -->
+                    <ul class="nav navbar-nav">
+                        &nbsp;
+                    </ul>
+                    
+                    <!-- Right Side Of Navbar -->
+                    <ul class="nav navbar-nav navbar-right">
+                        <!-- Authentication Links -->
+                            <li class="dropdown">
+                                <a href="" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">
+                                   <%= session.user ? session.user.name : '' %><span class="caret"></span>
+                                </a>
+                                <% if(session.user){ %>
+                                <ul class="dropdown-menu" role="menu">
+                                    <li>
+                                        <a href="/logout">
+                                            Logout
+                                        </a>
+                                    </li>
+                                </ul>
+                                <% } %>
+                            </li>
+                    </ul>
+                    
+                </div>
+            </div>
+        </nav>-->
+        <nav class="navbar-default navbar-side" role="navigation">
+            <div class="sidebar-collapse">
+                <ul class="nav" id="main-menu">
+                    <li>
+                        <a href="/dashboard" class="side-link" ><i class="fa fa-desktop "></i>Dashboard</a>
+                    </li>
+                    <li>
+                        <a href="/users" class="side-link"><i class="fa fa-user "></i>User
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/advertisement" class="side-link"><i class="fa fa-edit "></i>Advertisement
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/revenue" class="side-link"><i class="fa fa-table "></i>Revenue
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/logout" class="side-link"><i class="fa fa-sign-out "></i>Logout</a>
+                    </li>
+                    
+                </ul>
+            </div>
+
+    </nav>
+
+    //dashboard
+
+    <div id="wrapper">
+    <%- include('./includes/sidebar') -%>
+        <div id="page-wrapper" >
+            <div id="page-inner">
+                <div class="row text-center pad-top">
+                    <div class="col-lg-3 col-md-3 col-sm-3 col-xs-6">
+                        <div class="div-square">
+                            <a href="blank.html" >
+                                     <i class="fa fa-user fa-5x"></i>
+                                <h4>Drivers <span class="badge"><%= drivers.length %></span></h4>
+                            </a>
+                        </div>    
+                    </div>
+                    <div class="col-lg-3 col-md-3 col-sm-3 col-xs-6">
+                        <div class="div-square">
+                            <a href="blank.html" >
+                                     <i class="fa fa-clipboard fa-5x"></i>
+                                <h4>Advertisement <span class="badge"><%= advertisements.length %></span></h4>
+                            </a>
+                        </div>    
+                    </div>
+                </div>
+            </div>
+        </div>
+</div>
+
+
+
+
+<!-- Notifications Menu -->
+          <li class="dropdown notifications-menu">
+            <!-- Menu toggle button -->
+            <a href="#" class="dropdown-toggle" data-toggle="dropdown">
+              <i class="fa fa-bell-o"></i>
+              <span class="label label-warning">10</span>
+            </a>
+            <ul class="dropdown-menu">
+              <li class="header">You have 10 notifications</li>
+              <li>
+                <!-- Inner Menu: contains the notifications -->
+                <ul class="menu">
+                  <li><!-- start notification -->
+                    <a href="#">
+                      <i class="fa fa-users text-aqua"></i> 5 new members joined today
+                    </a>
+                  </li>
+                  <!-- end notification -->
+                </ul>
+              </li>
+              <li class="footer"><a href="#">View all</a></li>
+            </ul>
+          </li>
+          <!-- Tasks Menu -->
+          <li class="dropdown tasks-menu">
+            <!-- Menu Toggle Button -->
+            <a href="#" class="dropdown-toggle" data-toggle="dropdown">
+              <i class="fa fa-flag-o"></i>
+              <span class="label label-danger">9</span>
+            </a>
+            <ul class="dropdown-menu">
+              <li class="header">You have 9 tasks</li>
+              <li>
+                <!-- Inner menu: contains the tasks -->
+                <ul class="menu">
+                  <li><!-- Task item -->
+                    <a href="#">
+                      <!-- Task title and progress text -->
+                      <h3>
+                        Design some buttons
+                        <small class="pull-right">20%</small>
+                      </h3>
+                      <!-- The progress bar -->
+                      <div class="progress xs">
+                        <!-- Change the css width attribute to simulate progress -->
+                        <div class="progress-bar progress-bar-aqua" style="width: 20%" role="progressbar"
+                             aria-valuenow="20" aria-valuemin="0" aria-valuemax="100">
+                          <span class="sr-only">20% Complete</span>
+                        </div>
+                      </div>
+                    </a>
+                  </li>
+                  <!-- end task item -->
+                </ul>
+              </li>
+              <li class="footer">
+                <a href="#">View all tasks</a>
+              </li>
+            </ul>
+          </li>
+
+           <% contacts.forEach((contact, index) => { %>
+                                <tr class="<%= contact.read %>">
+                                    
+                                    <td><%= index + 1 %></td>
+                                    <td>
+                                        <a href="/view-notification/<%= contact._id %>/view"><%=  contact.name %></a>
+                                    </td>
+                                    <td>
+                                        <a href="/view-notification/<%= contact._id %>/view"><%= contact.email %></a>
+                                    </td>
+                                    <td><%= contact.subject %></td>
+                                    <td><%= contact.create.toISOString().slice(0,10); %></td>
+                                    <td> 
+                                        <!--<a class="ad_edit" data-datac="<%=  %>"><i class="fa fa-pencil"></i>
+                                        </a> |--> 
+                                        <a data-datac="/contact/<%= contact._id %>/remove" data-toggle="modal" data-target="#myModal2" class="contact_delete">
+                                            <i class="fa fa-trash"></i>
+                                        </a>
+                                        <!--<a href="/contact/<%=  %>/remove" id="delete-advertisement">
+                                            <i class="fa fa-trash"></i>
+                                        </a>-->
+                                    </td>
+                                </tr>
+                                <% }); %>
+
+                                <div class="modal-body">
+    <h3 class="" style="
+    line-height: 0px;
+">Name:Sumit kumar</h3>
+    
+<label class="col-sm-8 col-sm-offset-2 control-label">Name:<span class="pull-left">Sumit kumar</span></label>
+<label class="control-label">Name:Sumit kumar</label><label class="control-label">Name:Sumit kumar</label>
+    <h3 class="">Name:Sumit kumar</h3>
+    <h3 class="">Name:Sumit kumar</h3>
+    <h3 class="">Name:Sumit kumar</h3>
+    <h3 class="">Name:Sumit kumar</h3>
+    <h3>Advertisements</h3>
+</div>
+
+tab on-10:00
+tab off- 12:00
+total: 2*60*60
+
+foreground_on-10:02
+foreground_off-10:34
+total1: 32*60 sec
+
+foreground_on-10:40
+foreground_off-11:30
+total2: 50*60sec
+
+foreground_on-11:35
+foreground_off-11:58
+total3: 23*60sec
+
+ad_d1=20sec
+ad_d2=5sec
+ad_d3=5sec
+total4: 20+5+5sec
+
+no. =(total1+total2+total3)/total
+<!--download file(create , send to client , remove); -->
+let fs = require('fs');
+let path = require('path');
+
+let myController = (req, res) => {
+  let filename = 'myFile.ext';
+  let absPath = path.join(__dirname, '/my_files/', filename);
+  let relPath = path.join('./my_files', filename); // path relative to server root
+
+  fs.writeFile(relPath, 'File content', (err) => {
+    if (err) {
+      console.log(err);
+    }
+    res.download(absPath, (err) => {
+      if (err) {
+        console.log(err);
+      }
+      fs.unlink(relPath, (err) => {
+        if (err) {
+          console.log(err);
+        }
+        console.log('FILE [' + filename + '] REMOVED!');
+      });
+    });
+  });
+};
+<!--end->
+
+
+<div class="alert alert-danger">{"stack":"Error: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'http://hestalabs.com:3000/update-driver'.\n    at Object.send (https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js:4:16670)\n    at Function.ajax (https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js:4:13502)\n    at HTMLFormElement.<anonymous> (http://hestalabs.com:3000/assets/js/custom.js:131:11)\n    at HTMLFormElement.dispatch (https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js:3:10316)\n    at HTMLFormElement.q.handle (https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js:3:8343)"}</anonymous></div>
